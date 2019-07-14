@@ -51,6 +51,16 @@ _GetConsoleScreenBufferInfo.argtypes = [
 ]
 _GetConsoleScreenBufferInfo.restype = _wintypes.BOOL
 
+_WriteConsoleOutputCharacterW = _windll.kernel32.WriteConsoleOutputCharacterW
+_WriteConsoleOutputCharacterW.argtypes = [
+    _wintypes.HANDLE,
+    _wintypes.LPCWSTR,
+    _wintypes.DWORD,
+    _wintypes._COORD,
+    _wintypes.LPDWORD,
+]
+_WriteConsoleOutputCharacterW.restype = _wintypes.BOOL
+
 
 class Win32Console(_Console):
 
@@ -85,3 +95,19 @@ class Win32Console(_Console):
     def get_colors(self) -> int:
 
         return 16
+
+    def line_at(self, y: int, text: str, tail: int = 0) -> None:
+
+        written = _wintypes.DWORD()
+        if not _WriteConsoleOutputCharacterW(self._handle, text,
+                                             len(text) + tail,
+                                             _wintypes._COORD(0, y),
+                                             _byref(written)):
+            raise SystemError("WriteConsoleOutputCharacter() failed")
+
+        old_buffer_info = self._buffer_info
+        self._update_buffer_info()
+
+        import sys
+        print(old_buffer_info, file=sys.stderr)
+        print(self._buffer_info, flush=True, file=sys.stderr)
