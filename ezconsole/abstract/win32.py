@@ -12,7 +12,7 @@ from ctypes import (
 from ._console import _Console
 
 
-class _CONSOLE_SCREEN_BUFFER_INFO(_Structure):
+class _ConsoleScreenBufferInfo(_Structure):
 
     _fields_ = [
         ('dwSize', _wintypes._COORD),
@@ -47,7 +47,7 @@ _GetStdHandle.restype = _wintypes.HANDLE
 _GetConsoleScreenBufferInfo = _windll.kernel32.GetConsoleScreenBufferInfo
 _GetConsoleScreenBufferInfo.argtypes = [
     _wintypes.HANDLE,
-    _POINTER(_CONSOLE_SCREEN_BUFFER_INFO),
+    _POINTER(_ConsoleScreenBufferInfo),
 ]
 _GetConsoleScreenBufferInfo.restype = _wintypes.BOOL
 
@@ -60,12 +60,13 @@ class Win32Console(_Console):
         if self._handle == _INVALID_HANDLE_VALUE.value:
             raise SystemError("GetStdHandle() failed")
 
-        self._csbi = _CONSOLE_SCREEN_BUFFER_INFO()
-        self._update_csbi()
+        self._buffer_info = _ConsoleScreenBufferInfo()
+        self._update_buffer_info()
 
-    def _update_csbi(self) -> None:
+    def _update_buffer_info(self) -> None:
 
-        if not _GetConsoleScreenBufferInfo(self._handle, _byref(self._csbi)):
+        if not _GetConsoleScreenBufferInfo(self._handle,
+                                           _byref(self._buffer_info)):
             raise SystemError("GetConsoleScreenBufferInfo() failed")
 
     def print(self, s: str, flush: bool = False) -> None:
@@ -74,11 +75,11 @@ class Win32Console(_Console):
 
     def get_width(self) -> int:
 
-        return self._csbi.dwSize.X
+        return self._buffer_info.dwSize.X
 
     def get_height(self) -> int:
 
-        window = self._csbi.srWindow
+        window = self._buffer_info.srWindow
         return window.Bottom - window.Top + 1
 
     def get_colors(self) -> int:
