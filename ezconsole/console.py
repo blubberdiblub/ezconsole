@@ -47,29 +47,44 @@ class Console:
 
     def flush(self) -> None:
 
+        if _np.array_equal(self._cells, self._prev_cells):
+            return
+
         prev_rows, prev_cols = self._prev_cells.shape
+        rows, cols = self._cells.shape
+
+        if rows != prev_rows:
+            n = self._abstract_console.request_size(rows)
+            if n != rows:
+                rows = n
+
+                try:
+                    self._cells.resize((rows, cols))
+
+                except ValueError:
+                    self._cells = self._cells[:rows]
+
         prev_lines = _np.ndarray((prev_rows,),
                                  dtype=f'=U{prev_cols}',
                                  buffer=self._prev_cells)
-
-        rows, cols = self._cells.shape
         lines = _np.ndarray((rows,), dtype=f'=U{cols}', buffer=self._cells)
-
         indices, = (lines[:prev_rows] != prev_lines[:rows]).nonzero()
 
         if len(indices):
             for i, line, old_len in zip(indices, lines[indices],
                                         _np.char.str_len(prev_lines[indices])):
 
-                self._abstract_console.line_at(i, line, min(old_len - len(line), 0))
+                self._abstract_console.line_at(i, line, max(old_len - len(line), 0))
 
-        if rows < prev_rows:
-            for i in range(rows, prev_rows):
-                self._abstract_console.line_at(i, '', len(prev_lines[i]))
-
-        elif rows > prev_rows:
+        if rows > prev_rows:
             for i in range(prev_rows, rows):
                 self._abstract_console.line_at(i, lines[i], 0)
+
+        if self._prev_cells.shape == self._cells.shape:
+            self._prev_cells[:] = self._cells
+
+        else:
+            self._prev_cells = self._cells.copy()
 
     def get_buffer(self) -> _np.ndarray:
 

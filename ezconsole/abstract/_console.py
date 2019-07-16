@@ -15,5 +15,8 @@ class _Console:
     def get_colors(self) -> int:
         return 2
 
+    def request_size(self, height: int) -> int:
+        raise NotImplementedError
+
     def line_at(self, y: int, text: str, tail: int = 0) -> None:
         raise NotImplementedError
