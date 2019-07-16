@@ -55,6 +55,24 @@ class ConsoleScreenBufferInfo(_Structure):
 INVALID_HANDLE_VALUE = HANDLE(-1)
 
 
+class Win32APIError(Exception):
+    pass
+
+
+def _errcheck_return_handle(result, func, _) -> int:
+
+    if result == INVALID_HANDLE_VALUE.value:
+        raise Win32APIError(f"{func.__name__}() failed")
+
+    return result
+
+
+def _errcheck_return_success(result, func, _) -> None:
+
+    if not result:
+        raise Win32APIError(f"{func.__name__}() failed")
+
+
 _windll = _LibraryLoader(_WinDLL)
 
 
@@ -63,36 +81,45 @@ GetStdHandle.argtypes = [
     DWORD,
 ]
 GetStdHandle.restype = HANDLE
+GetStdHandle.errcheck = _errcheck_return_handle
 
 FillConsoleOutputCharacterW = _windll.kernel32.FillConsoleOutputCharacterW
 FillConsoleOutputCharacterW.argtypes = [HANDLE, WCHAR, DWORD, COORD, LPDWORD]
 FillConsoleOutputCharacterW.restype = BOOL
+FillConsoleOutputCharacterW.errcheck = _errcheck_return_success
 
 GetConsoleMode = _windll.kernel32.GetConsoleMode
 GetConsoleMode.argtypes = [HANDLE, LPDWORD]
 GetConsoleMode.restype = BOOL
+GetConsoleMode.errcheck = _errcheck_return_success
 
 GetConsoleScreenBufferInfo = _windll.kernel32.GetConsoleScreenBufferInfo
 GetConsoleScreenBufferInfo.argtypes = [HANDLE, _POINTER(ConsoleScreenBufferInfo)]
 GetConsoleScreenBufferInfo.restype = BOOL
+GetConsoleScreenBufferInfo.errcheck = _errcheck_return_success
 
 ScrollConsoleScreenBufferW = _windll.kernel32.ScrollConsoleScreenBufferW
 ScrollConsoleScreenBufferW.argtypes = [HANDLE, PSMALL_RECT, PSMALL_RECT, COORD,
                                        _POINTER(CharInfo)]
 ScrollConsoleScreenBufferW.restype = BOOL
+ScrollConsoleScreenBufferW.errcheck = _errcheck_return_success
 
 SetConsoleCursorPosition = _windll.kernel32.SetConsoleCursorPosition
 SetConsoleCursorPosition.argtypes = [HANDLE, COORD]
 SetConsoleCursorPosition.restype = BOOL
+SetConsoleCursorPosition.errcheck = _errcheck_return_success
 
 SetConsoleMode = _windll.kernel32.SetConsoleMode
 SetConsoleMode.argtypes = [HANDLE, DWORD]
 SetConsoleMode.restype = BOOL
+SetConsoleMode.errcheck = _errcheck_return_success
 
 WriteConsoleW = _windll.kernel32.WriteConsoleW
 WriteConsoleW.argtypes = [HANDLE, LPWSTR, DWORD, LPDWORD, LPVOID]
 WriteConsoleW.restype = BOOL
+WriteConsoleW.errcheck = _errcheck_return_success
 
 WriteConsoleOutputCharacterW = _windll.kernel32.WriteConsoleOutputCharacterW
 WriteConsoleOutputCharacterW.argtypes = [HANDLE, LPCWSTR, DWORD, COORD, LPDWORD]
 WriteConsoleOutputCharacterW.restype = BOOL
+WriteConsoleOutputCharacterW.errcheck = _errcheck_return_success

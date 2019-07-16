@@ -39,16 +39,12 @@ class Win32Console(_Console):
         self._buffer_info = _ConsoleScreenBufferInfo()
 
         self._handle = _GetStdHandle(-11)
-        if self._handle == _INVALID_HANDLE_VALUE.value:
-            raise RuntimeError("GetStdHandle() failed")
 
         mode = _DWORD()
-        if not _GetConsoleMode(self._handle, _byref(mode)):
-            raise RuntimeError("GetConsoleMode() failed")
+        _GetConsoleMode(self._handle, _byref(mode))
         self._saved_mode = mode.value
 
-        if not _SetConsoleMode(self._handle, self._saved_mode | 0x001f):
-            raise RuntimeError("SetConsoleMode() failed")
+        _SetConsoleMode(self._handle, self._saved_mode | 0x001f)
 
         self._update_buffer_info()
 
@@ -64,9 +60,7 @@ class Win32Console(_Console):
 
     def _update_buffer_info(self) -> None:
 
-        if not _GetConsoleScreenBufferInfo(self._handle,
-                                           _byref(self._buffer_info)):
-            raise RuntimeError("GetConsoleScreenBufferInfo() failed")
+        _GetConsoleScreenBufferInfo(self._handle, _byref(self._buffer_info))
 
     def print(self, s: str, flush: bool = False) -> None:
 
@@ -105,12 +99,11 @@ class Win32Console(_Console):
 
         missing_lines = (height - self._range_height) - (max_y - y)
         if missing_lines > 0:
-            if not _ScrollConsoleScreenBufferW(
+            _ScrollConsoleScreenBufferW(
                     self._handle, _SMALL_RECT(0, 0, max_x, y - 1), None,
                     _COORD(0, -missing_lines),
                     _CharInfo(self._fill_char, self._buffer_info.wAttributes)
-            ):
-                raise RuntimeError("ScrollConsoleScreenBufferW() failed")
+            )
 
             self._range_height += missing_lines
             if self._range_height == height:
@@ -121,19 +114,17 @@ class Win32Console(_Console):
             y += delta
 
         scroll_region = _SMALL_RECT(0, y, max_x, max_y)
-        if not _ScrollConsoleScreenBufferW(
+        _ScrollConsoleScreenBufferW(
                 self._handle, scroll_region, scroll_region,
                 _COORD(0, y + delta),
                 _CharInfo(self._fill_char, self._buffer_info.wAttributes)
-        ):
-            raise RuntimeError("ScrollConsoleScreenBufferW() failed")
+        )
 
         self._range_height += delta
         self._buffer_info.dwCursorPosition.Y += delta
 
-        if not _SetConsoleCursorPosition(self._handle,
-                                         self._buffer_info.dwCursorPosition):
-            raise RuntimeError("SetConsoleCursorPosition() failed")
+        _SetConsoleCursorPosition(self._handle,
+                                  self._buffer_info.dwCursorPosition)
 
         assert self._range_height == height
         return height
@@ -144,13 +135,11 @@ class Win32Console(_Console):
         n = len(text)
 
         written = _DWORD()
-        if not _WriteConsoleOutputCharacterW(self._handle, text, n,
-                                             _COORD(0, y), _byref(written)):
-            raise RuntimeError("WriteConsoleOutputCharacterW() failed")
+        _WriteConsoleOutputCharacterW(self._handle, text, n, _COORD(0, y),
+                                      _byref(written))
 
         if tail <= 0:
             return
 
-        if not _FillConsoleOutputCharacterW(self._handle, self._fill_char, tail,
-                                            _COORD(n, y), _byref(written)):
-            raise RuntimeError("FillConsoleOutputCharacterW() failed")
+        _FillConsoleOutputCharacterW(self._handle, self._fill_char, tail,
+                                     _COORD(n, y), _byref(written))
