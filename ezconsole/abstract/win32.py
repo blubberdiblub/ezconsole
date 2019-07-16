@@ -1,124 +1,30 @@
 #!/usr/bin/env python3
 
-from ctypes import (
-    LibraryLoader as _LibraryLoader,
-    wintypes as _wintypes,
-    byref as _byref,
-    Structure as _Structure,
-    POINTER as _POINTER,
-    WinDLL as _WinDLL,
-)
+from ctypes import byref as _byref
 
 from ._console import _Console
 
+from ._win32api import (
+    DWORD as _DWORD,
 
-class _ConsoleScreenBufferInfo(_Structure):
+    COORD as _COORD,
+    SMALL_RECT as _SMALL_RECT,
 
-    _fields_ = [
-        ('dwSize', _wintypes._COORD),
-        ('dwCursorPosition', _wintypes._COORD),
-        ('wAttributes', _wintypes.WORD),
-        ('srWindow', _wintypes.SMALL_RECT),
-        ('dwMaximumWindowSize', _wintypes._COORD),
-    ]
+    CharInfo as _CharInfo,
+    ConsoleScreenBufferInfo as _ConsoleScreenBufferInfo,
 
-    def __str__(self) -> str:
-        return '<(%d,%d),(%d,%d),%04x,((%d,%d),(%d,%d)),(%d,%d)>' % (
-            self.dwSize.Y, self.dwSize.X,
-            self.dwCursorPosition.Y, self.dwCursorPosition.X,
-            self.wAttributes,
-            self.srWindow.Top, self.srWindow.Left,
-            self.srWindow.Bottom, self.srWindow.Right,
-            self.dwMaximumWindowSize.Y, self.dwMaximumWindowSize.X,
-        )
+    INVALID_HANDLE_VALUE as _INVALID_HANDLE_VALUE,
 
+    GetStdHandle as _GetStdHandle,
 
-class _CharInfo(_Structure):
-
-    _fields_ = [
-        ('Char', _wintypes.WCHAR),
-        ('Attributes', _wintypes.WORD),
-    ]
-
-
-_INVALID_HANDLE_VALUE = _wintypes.HANDLE(-1)
-
-
-_windll = _LibraryLoader(_WinDLL)
-
-_GetStdHandle = _windll.kernel32.GetStdHandle
-_GetStdHandle.argtypes = [
-    _wintypes.DWORD,
-]
-_GetStdHandle.restype = _wintypes.HANDLE
-
-_FillConsoleOutputCharacterW = _windll.kernel32.FillConsoleOutputCharacterW
-_FillConsoleOutputCharacterW.argtypes = [
-    _wintypes.HANDLE,
-    _wintypes.WCHAR,
-    _wintypes.DWORD,
-    _wintypes._COORD,
-    _wintypes.LPDWORD,
-]
-_FillConsoleOutputCharacterW.restype = _wintypes.BOOL
-
-_GetConsoleMode = _windll.kernel32.GetConsoleMode
-_GetConsoleMode.argtypes = [
-    _wintypes.HANDLE,
-    _wintypes.LPDWORD,
-]
-_GetConsoleMode.restype = _wintypes.BOOL
-
-_GetConsoleScreenBufferInfo = _windll.kernel32.GetConsoleScreenBufferInfo
-_GetConsoleScreenBufferInfo.argtypes = [
-    _wintypes.HANDLE,
-    _POINTER(_ConsoleScreenBufferInfo),
-]
-_GetConsoleScreenBufferInfo.restype = _wintypes.BOOL
-
-_ScrollConsoleScreenBufferW = _windll.kernel32.ScrollConsoleScreenBufferW
-_ScrollConsoleScreenBufferW.argtypes = [
-    _wintypes.HANDLE,
-    _wintypes.PSMALL_RECT,
-    _wintypes.PSMALL_RECT,
-    _wintypes._COORD,
-    _POINTER(_CharInfo),
-]
-_ScrollConsoleScreenBufferW.restype = _wintypes.BOOL
-
-_SetConsoleCursorPosition = _windll.kernel32.SetConsoleCursorPosition
-_SetConsoleCursorPosition.argtypes = [
-    _wintypes.HANDLE,
-    _wintypes._COORD,
-]
-_SetConsoleCursorPosition.restype = _wintypes.BOOL
-
-_SetConsoleMode = _windll.kernel32.SetConsoleMode
-_SetConsoleMode.argtypes = [
-    _wintypes.HANDLE,
-    _wintypes.DWORD,
-]
-_SetConsoleMode.restype = _wintypes.BOOL
-
-_WriteConsoleW = _windll.kernel32.WriteConsoleW
-_WriteConsoleW.argtypes = [
-    _wintypes.HANDLE,
-    _wintypes.LPWSTR,
-    _wintypes.DWORD,
-    _wintypes.LPDWORD,
-    _wintypes.LPVOID,
-]
-_WriteConsoleW.restype = _wintypes.BOOL
-
-_WriteConsoleOutputCharacterW = _windll.kernel32.WriteConsoleOutputCharacterW
-_WriteConsoleOutputCharacterW.argtypes = [
-    _wintypes.HANDLE,
-    _wintypes.LPCWSTR,
-    _wintypes.DWORD,
-    _wintypes._COORD,
-    _wintypes.LPDWORD,
-]
-_WriteConsoleOutputCharacterW.restype = _wintypes.BOOL
+    FillConsoleOutputCharacterW as _FillConsoleOutputCharacterW,
+    GetConsoleMode as _GetConsoleMode,
+    GetConsoleScreenBufferInfo as _GetConsoleScreenBufferInfo,
+    ScrollConsoleScreenBufferW as _ScrollConsoleScreenBufferW,
+    SetConsoleCursorPosition as _SetConsoleCursorPosition,
+    SetConsoleMode as _SetConsoleMode,
+    WriteConsoleOutputCharacterW as _WriteConsoleOutputCharacterW,
+)
 
 
 class Win32Console(_Console):
@@ -136,7 +42,7 @@ class Win32Console(_Console):
         if self._handle == _INVALID_HANDLE_VALUE.value:
             raise SystemError("GetStdHandle() failed")
 
-        mode = _wintypes.DWORD()
+        mode = _DWORD()
         if not _GetConsoleMode(self._handle, _byref(mode)):
             raise SystemError("GetConsoleMode() failed")
         self._saved_mode = mode.value
@@ -199,14 +105,11 @@ class Win32Console(_Console):
 
         missing_lines = (height - self._range_height) - (max_y - y)
         if missing_lines > 0:
-            if not _ScrollConsoleScreenBufferW(self._handle,
-                                               _wintypes.SMALL_RECT(0, 0, max_x,
-                                                                    y - 1),
-                                               None,
-                                               _wintypes._COORD(0,
-                                                                -missing_lines),
-                                               _CharInfo(self._fill_char,
-                                                         self._buffer_info.wAttributes)):
+            if not _ScrollConsoleScreenBufferW(
+                    self._handle, _SMALL_RECT(0, 0, max_x, y - 1), None,
+                    _COORD(0, -missing_lines),
+                    _CharInfo(self._fill_char, self._buffer_info.wAttributes)
+            ):
                 raise SystemError("ScrollConsoleScreenBufferW() failed")
 
             self._range_height += missing_lines
@@ -217,12 +120,12 @@ class Win32Console(_Console):
         if delta < 0:
             y += delta
 
-        scroll_region = _wintypes.SMALL_RECT(0, y, max_x, max_y)
-        if not _ScrollConsoleScreenBufferW(self._handle,
-                                           scroll_region, scroll_region,
-                                           _wintypes._COORD(0, y + delta),
-                                           _CharInfo(self._fill_char,
-                                                     self._buffer_info.wAttributes)):
+        scroll_region = _SMALL_RECT(0, y, max_x, max_y)
+        if not _ScrollConsoleScreenBufferW(
+                self._handle, scroll_region, scroll_region,
+                _COORD(0, y + delta),
+                _CharInfo(self._fill_char, self._buffer_info.wAttributes)
+        ):
             raise SystemError("ScrollConsoleScreenBufferW() failed")
 
         self._range_height += delta
@@ -240,16 +143,14 @@ class Win32Console(_Console):
         y += self._buffer_info.dwCursorPosition.Y - self._range_height
         n = len(text)
 
-        written = _wintypes.DWORD()
+        written = _DWORD()
         if not _WriteConsoleOutputCharacterW(self._handle, text, n,
-                                             _wintypes._COORD(0, y),
-                                             _byref(written)):
+                                             _COORD(0, y), _byref(written)):
             raise SystemError("WriteConsoleOutputCharacterW() failed")
 
         if tail <= 0:
             return
 
         if not _FillConsoleOutputCharacterW(self._handle, self._fill_char, tail,
-                                            _wintypes._COORD(n, y),
-                                            _byref(written)):
+                                            _COORD(n, y), _byref(written)):
             raise SystemError("FillConsoleOutputCharacterW() failed")
