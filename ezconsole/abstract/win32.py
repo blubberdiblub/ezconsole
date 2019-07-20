@@ -1,30 +1,54 @@
 #!/usr/bin/env python3
 
+import asyncio as _asyncio
+import logging as _logging
+
+from asyncio.windows_events import (
+    WindowsProactorEventLoopPolicy as _EventLoopPolicy,
+)
+
+from concurrent.futures import ThreadPoolExecutor as _Executor
+
 from ctypes import byref as _byref
+
+from threading import Event as _Event
 
 from ._console import _Console
 
 from ._win32api import (
     DWORD as _DWORD,
 
-    COORD as _COORD,
+    Coord as _Coord,
     SMALL_RECT as _SMALL_RECT,
 
     CharInfo as _CharInfo,
     ConsoleScreenBufferInfo as _ConsoleScreenBufferInfo,
+    SecurityAttributes as _SecurityAttributes,
+    KeyEventRecord as _KeyEventRecord,
+    InputRecord as _InputRecord,
 
     INVALID_HANDLE_VALUE as _INVALID_HANDLE_VALUE,
 
-    GetStdHandle as _GetStdHandle,
+    CloseHandle as _CloseHandle,
+    CreateFileW as _CreateFileW,
 
     FillConsoleOutputCharacterW as _FillConsoleOutputCharacterW,
+    FlushConsoleInputBuffer as _FlushConsoleInputBuffer,
     GetConsoleMode as _GetConsoleMode,
     GetConsoleScreenBufferInfo as _GetConsoleScreenBufferInfo,
+    ReadConsoleInputW as _ReadConsoleInputW,
     ScrollConsoleScreenBufferW as _ScrollConsoleScreenBufferW,
     SetConsoleCursorPosition as _SetConsoleCursorPosition,
     SetConsoleMode as _SetConsoleMode,
+    WriteConsoleInputW as _WriteConsoleInputW,
     WriteConsoleOutputCharacterW as _WriteConsoleOutputCharacterW,
 )
+
+
+_log = _logging.getLogger(__name__)
+
+# noinspection PyTypeChecker
+_asyncio.set_event_loop_policy(_EventLoopPolicy())
 
 
 class Win32Console(_Console):
@@ -34,33 +58,87 @@ class Win32Console(_Console):
         self._range_height = 0
         self._fill_char = ' '
 
-        self._handle = None
-        self._saved_mode = 0x0003
+        self._executor = None
+
+        self._output = None
+        self._saved_output_mode = None
         self._buffer_info = _ConsoleScreenBufferInfo()
 
-        self._handle = _GetStdHandle(-11)
+        self._input_handler = None
+        self._input_future = None
+
+        self._executor = _Executor(max_workers=1)
+
+        input_ = _CreateFileW('CONIN$', 0xc0000000, 0x3,
+                              _byref(_SecurityAttributes(None, True)),
+                              3, 0x80, None)
+
+        self._output = _CreateFileW('CONOUT$', 0xc0000000, 0x3,
+                                    _byref(_SecurityAttributes(None, True)),
+                                    3, 0x80, None)
 
         mode = _DWORD()
-        _GetConsoleMode(self._handle, _byref(mode))
-        self._saved_mode = mode.value
+        _GetConsoleMode(self._output, _byref(mode))
+        self._saved_output_mode = mode.value
 
-        _SetConsoleMode(self._handle, self._saved_mode | 0x001f)
+        _SetConsoleMode(self._output, self._saved_output_mode | 0x0018)
 
         self._update_buffer_info()
 
+        self._input_handler = _ConsoleInputHandler(input_, close=True)
+
+        loop = _asyncio.get_event_loop()
+        self._input_future = loop.run_in_executor(self._executor,
+                                                  self._input_handler.handle)
+
     def __del__(self) -> None:
 
-        handle, self._handle = self._handle, None
+        self.close(timeout=0)
+
+    def close(self, timeout: float = 0.1) -> None:
+
+        input_future, self._input_future = self._input_future, None
+        input_handler, self._input_handler = self._input_handler, None
+        output, self._output = self._output, None
+        executor, self._executor = self._executor, None
         buffer_info, self._buffer_info = self._buffer_info, None
 
-        if handle is None or handle == _INVALID_HANDLE_VALUE.value:
-            return
+        if input_future is not None:
 
-        _SetConsoleMode(handle, self._saved_mode)
+            try:
+                input_future.cancel()
+
+            except Exception:
+                _log.exception("unable to cancel input handler during cleanup")
+
+        if input_handler is not None:
+
+            try:
+                input_handler.shutdown()
+
+            except Exception:
+                _log.exception("unable to shutdown input handler during cleanup")
+
+        if (self._saved_output_mode is not None and
+                output is not None and output != _INVALID_HANDLE_VALUE.value):
+
+            try:
+                _SetConsoleMode(output, self._saved_output_mode)
+
+            except Exception:
+                _log.exception("unable to reset console output mode during cleanup")
+
+        if executor is not None:
+
+            try:
+                executor.shutdown(wait=False)
+
+            except Exception:
+                _log.exception("unable to shutdown executor during cleanup")
 
     def _update_buffer_info(self) -> None:
 
-        _GetConsoleScreenBufferInfo(self._handle, _byref(self._buffer_info))
+        _GetConsoleScreenBufferInfo(self._output, _byref(self._buffer_info))
 
     def print(self, s: str, flush: bool = False) -> None:
 
@@ -100,8 +178,8 @@ class Win32Console(_Console):
         missing_lines = (height - self._range_height) - (max_y - y)
         if missing_lines > 0:
             _ScrollConsoleScreenBufferW(
-                    self._handle, _SMALL_RECT(0, 0, max_x, y - 1), None,
-                    _COORD(0, -missing_lines),
+                    self._output, _SMALL_RECT(0, 0, max_x, y - 1), None,
+                    _Coord(0, -missing_lines),
                     _CharInfo(self._fill_char, self._buffer_info.wAttributes)
             )
 
@@ -115,15 +193,15 @@ class Win32Console(_Console):
 
         scroll_region = _SMALL_RECT(0, y, max_x, max_y)
         _ScrollConsoleScreenBufferW(
-                self._handle, scroll_region, scroll_region,
-                _COORD(0, y + delta),
+                self._output, scroll_region, scroll_region,
+                _Coord(0, y + delta),
                 _CharInfo(self._fill_char, self._buffer_info.wAttributes)
         )
 
         self._range_height += delta
         self._buffer_info.dwCursorPosition.Y += delta
 
-        _SetConsoleCursorPosition(self._handle,
+        _SetConsoleCursorPosition(self._output,
                                   self._buffer_info.dwCursorPosition)
 
         assert self._range_height == height
@@ -135,11 +213,85 @@ class Win32Console(_Console):
         n = len(text)
 
         written = _DWORD()
-        _WriteConsoleOutputCharacterW(self._handle, text, n, _COORD(0, y),
+        _WriteConsoleOutputCharacterW(self._output, text, n, _Coord(0, y),
                                       _byref(written))
 
         if tail <= 0:
             return
 
-        _FillConsoleOutputCharacterW(self._handle, self._fill_char, tail,
-                                     _COORD(n, y), _byref(written))
+        _FillConsoleOutputCharacterW(self._output, self._fill_char, tail,
+                                     _Coord(n, y), _byref(written))
+
+
+class _ConsoleInputHandler:
+
+    def __init__(self, handle, close=False) -> None:
+
+        self._handle = handle
+        self._close = close
+        self._saved_mode = None
+        self._shutdown_event = None
+
+        mode = _DWORD()
+        _GetConsoleMode(self._handle, _byref(mode))
+        self._saved_mode = mode.value
+
+        _SetConsoleMode(self._handle, self._saved_mode & ~0x0007 | 0x0018)
+
+        self._shutdown_event = _Event()
+
+    def __del__(self) -> None:
+
+        handle, self._handle = self._handle, None
+        saved_mode, self._saved_mode = self._saved_mode, None
+
+        if handle is not None and handle != _INVALID_HANDLE_VALUE.value:
+
+            try:
+                _FlushConsoleInputBuffer(handle)
+
+            except Exception:
+                _log.exception("unable to flush console input buffer during cleanup")
+
+            if saved_mode is not None:
+
+                try:
+                    _SetConsoleMode(handle, saved_mode)
+
+                except Exception:
+                    _log.exception("unable to reset console input mode during cleanup")
+
+            if self._close:
+
+                try:
+                    _CloseHandle(handle)
+
+                except Exception:
+                    _log.exception("unable to close the console input handle during cleanup")
+
+    def shutdown(self) -> None:
+
+        self._shutdown_event.set()
+
+        input_record = _InputRecord(EventType=0x1, KeyEvent=_KeyEventRecord(
+            wVirtualKeyCode=0xff,
+            wVirtualScanCode=0xffff,
+        ))
+        written = _DWORD()
+        _WriteConsoleInputW(self._handle, input_record, 1, _byref(written))
+
+    def handle(self) -> None:
+
+        # noinspection PyTypeChecker,PyCallingNonCallable
+        buffer = (_InputRecord * 100)()
+        read = _DWORD()
+
+        while not self._shutdown_event.is_set():
+
+            _ReadConsoleInputW(self._handle, buffer, len(buffer), _byref(read))
+
+            if self._shutdown_event.is_set():
+                break
+
+            for input_record in buffer[:read.value]:
+                _log.debug("%r", input_record)

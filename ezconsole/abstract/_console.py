@@ -3,6 +3,9 @@
 
 class _Console:
 
+    def close(self, timeout: float = 0.1) -> None:
+        raise NotImplementedError
+
     def print(self, s: str, flush: bool = False) -> None:
         raise NotImplementedError
 
