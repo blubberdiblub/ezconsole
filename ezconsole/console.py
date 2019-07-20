@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
-from typing import Tuple as _Tuple
+from typing import (
+    Any as _Any,
+    Callable as _Callable,
+    Tuple as _Tuple,
+)
 
 import numpy as _np
 
@@ -26,7 +30,8 @@ class Console:
 
     def visible_dims(self) -> _Tuple[int, int]:
 
-        return self._abstract_console.get_height(), self._abstract_console.get_width()
+        return (self._abstract_console.get_height(),
+                self._abstract_console.get_width())
 
     def resize_buffer(self, rows, cols) -> None:
 
@@ -81,7 +86,8 @@ class Console:
             for i, line, old_len in zip(indices, lines[indices],
                                         _np.char.str_len(prev_lines[indices])):
 
-                self._abstract_console.line_at(i, line, max(old_len - len(line), 0))
+                self._abstract_console.line_at(i, line,
+                                               max(old_len - len(line), 0))
 
         if rows > prev_rows:
             for i in range(prev_rows, rows):
@@ -96,3 +102,11 @@ class Console:
     def get_buffer(self) -> _np.ndarray:
 
         return self._cells
+
+    def register_event_handler(self, func: _Callable) -> _Any:
+
+        return self._abstract_console.register_input_callback(func)
+
+    def unregister_event_handler(self, token: _Any) -> None:
+
+        self._abstract_console.unregister_input_callback(token)

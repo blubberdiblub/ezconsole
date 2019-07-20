@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 
+from typing import (
+    Any as _Any,
+    Callable as _Callable,
+)
+
 import asyncio as _asyncio
 import logging as _logging
+import threading as _threading
 
 from asyncio.windows_events import (
     WindowsProactorEventLoopPolicy as _EventLoopPolicy,
@@ -10,8 +16,6 @@ from asyncio.windows_events import (
 from concurrent.futures import ThreadPoolExecutor as _Executor
 
 from ctypes import byref as _byref
-
-from threading import Event as _Event
 
 from ._console import _Console
 
@@ -43,6 +47,8 @@ from ._win32api import (
     WriteConsoleInputW as _WriteConsoleInputW,
     WriteConsoleOutputCharacterW as _WriteConsoleOutputCharacterW,
 )
+
+from .. import events as _events
 
 
 _log = _logging.getLogger(__name__)
@@ -95,13 +101,14 @@ class Win32Console(_Console):
 
         self.close(timeout=0)
 
+    # noinspection PyBroadException
     def close(self, timeout: float = 0.1) -> None:
 
         input_future, self._input_future = self._input_future, None
         input_handler, self._input_handler = self._input_handler, None
         output, self._output = self._output, None
         executor, self._executor = self._executor, None
-        buffer_info, self._buffer_info = self._buffer_info, None
+        self._buffer_info = None
 
         if input_future is not None:
 
@@ -117,7 +124,9 @@ class Win32Console(_Console):
                 input_handler.shutdown()
 
             except Exception:
-                _log.exception("unable to shutdown input handler during cleanup")
+                _log.exception(
+                    "unable to shutdown input handler during cleanup"
+                )
 
         if (self._saved_output_mode is not None and
                 output is not None and output != _INVALID_HANDLE_VALUE.value):
@@ -126,7 +135,9 @@ class Win32Console(_Console):
                 _SetConsoleMode(output, self._saved_output_mode)
 
             except Exception:
-                _log.exception("unable to reset console output mode during cleanup")
+                _log.exception(
+                    "unable to reset console output mode during cleanup"
+                )
 
         if executor is not None:
 
@@ -222,6 +233,14 @@ class Win32Console(_Console):
         _FillConsoleOutputCharacterW(self._output, self._fill_char, tail,
                                      _Coord(n, y), _byref(written))
 
+    def register_input_callback(self, callback: _Callable) -> _Any:
+
+        return self._input_handler.register_callback(callback)
+
+    def unregister_input_callback(self, token: _Any) -> None:
+
+        self._input_handler.unregister_callback(token)
+
 
 class _ConsoleInputHandler:
 
@@ -230,7 +249,9 @@ class _ConsoleInputHandler:
         self._handle = handle
         self._close = close
         self._saved_mode = None
-        self._shutdown_event = None
+        self._callback = None
+        self._callback_lock = None
+        self._shutdown_signal = None
 
         mode = _DWORD()
         _GetConsoleMode(self._handle, _byref(mode))
@@ -238,8 +259,10 @@ class _ConsoleInputHandler:
 
         _SetConsoleMode(self._handle, self._saved_mode & ~0x0007 | 0x0018)
 
-        self._shutdown_event = _Event()
+        self._callback_lock = _threading.Lock()
+        self._shutdown_signal = _threading.Event()
 
+    # noinspection PyBroadException
     def __del__(self) -> None:
 
         handle, self._handle = self._handle, None
@@ -251,7 +274,9 @@ class _ConsoleInputHandler:
                 _FlushConsoleInputBuffer(handle)
 
             except Exception:
-                _log.exception("unable to flush console input buffer during cleanup")
+                _log.exception(
+                    "unable to flush console input buffer during cleanup"
+                )
 
             if saved_mode is not None:
 
@@ -259,7 +284,9 @@ class _ConsoleInputHandler:
                     _SetConsoleMode(handle, saved_mode)
 
                 except Exception:
-                    _log.exception("unable to reset console input mode during cleanup")
+                    _log.exception(
+                        "unable to reset console input mode during cleanup"
+                    )
 
             if self._close:
 
@@ -267,11 +294,13 @@ class _ConsoleInputHandler:
                     _CloseHandle(handle)
 
                 except Exception:
-                    _log.exception("unable to close the console input handle during cleanup")
+                    _log.exception(
+                        "unable to close console input handle during cleanup"
+                    )
 
     def shutdown(self) -> None:
 
-        self._shutdown_event.set()
+        self._shutdown_signal.set()
 
         input_record = _InputRecord(EventType=0x1, KeyEvent=_KeyEventRecord(
             wVirtualKeyCode=0xff,
@@ -286,12 +315,64 @@ class _ConsoleInputHandler:
         buffer = (_InputRecord * 100)()
         read = _DWORD()
 
-        while not self._shutdown_event.is_set():
+        while not self._shutdown_signal.is_set():
 
             _ReadConsoleInputW(self._handle, buffer, len(buffer), _byref(read))
 
-            if self._shutdown_event.is_set():
+            if self._shutdown_signal.is_set():
                 break
 
             for input_record in buffer[:read.value]:
-                _log.debug("%r", input_record)
+
+                if input_record.EventType != 0x0001:
+                    continue
+
+                key_event = input_record.KeyEvent
+                if not key_event.bKeyDown:
+                    continue
+
+                vk = key_event.wVirtualKeyCode
+                if vk == 0x1b:
+                    event = _events.QuitEvent()
+
+                elif vk == 0x26:
+                    event = _events.UpNavEvent()
+
+                elif vk == 0x28:
+                    event = _events.DownNavEvent()
+
+                else:
+                    continue
+
+                with self._callback_lock:
+                    if self._callback is None:
+                        continue
+
+                    loop, callback = self._callback
+
+                loop.call_soon_threadsafe(callback, event)
+
+    def register_callback(self, callback: _Callable) -> _Any:
+
+        pair = _asyncio.get_running_loop(), callback
+
+        with self._callback_lock:
+
+            if self._callback is not None:
+                raise NotImplementedError("cannot register multiple callbacks")
+
+            self._callback = pair
+
+        return hash(pair)
+
+    def unregister_callback(self, token: _Any) -> None:
+
+        with self._callback_lock:
+
+            if self._callback is None:
+                raise ValueError("no callback has been registered")
+
+            if hash(self._callback) != token:
+                raise ValueError("token mismatch")
+
+            self._callback = None

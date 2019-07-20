@@ -234,7 +234,8 @@ GetConsoleMode.restype = BOOL
 GetConsoleMode.errcheck = _errcheck_return_success
 
 GetConsoleScreenBufferInfo = _windll.kernel32.GetConsoleScreenBufferInfo
-GetConsoleScreenBufferInfo.argtypes = [HANDLE, _POINTER(ConsoleScreenBufferInfo)]
+GetConsoleScreenBufferInfo.argtypes = [HANDLE,
+                                       _POINTER(ConsoleScreenBufferInfo)]
 GetConsoleScreenBufferInfo.restype = BOOL
 GetConsoleScreenBufferInfo.errcheck = _errcheck_return_success
 
