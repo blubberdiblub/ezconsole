@@ -17,6 +17,13 @@ class Console:
         self._prev_cells = _np.zeros((0, cols), dtype='=U1')
         self._cells = _np.zeros((0, cols), dtype='=U1')
 
+    def close(self, timeout: float = 0.1) -> None:
+
+        abstract_console, self._abstract_console = self._abstract_console, None
+
+        if abstract_console is not None:
+            abstract_console.close(timeout=timeout)
+
     def visible_dims(self) -> _Tuple[int, int]:
 
         return self._abstract_console.get_height(), self._abstract_console.get_width()
