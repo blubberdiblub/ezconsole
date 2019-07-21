@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 
+import asyncio as _asyncio
+
 from asyncio import Event as _Signal
 from functools import partial as _partial
 
 from . import events as _events
 
-from .elements import _Element
+from .elements import (
+    _Container,
+    _Element,
+)
+
 from .console import Console as _Console
 
 
-class GUI:
+class GUI(_Container):
 
-    def __init__(self, element: _Element, console: _Console = None) -> None:
+    def __init__(self, element: _Element, *, console: _Console = None,
+                 **kwargs) -> None:
+
+        super().__init__(**kwargs)
 
         self.element = element
         self.console = console if console is not None else _Console()
@@ -20,8 +29,32 @@ class GUI:
         tty_rows, tty_cols = console.visible_dims()
 
         self.console.resize_buffer(min(def_rows, tty_rows), tty_cols)
-        self.element.render(self.console.get_buffer())
-        self.console.flush()
+
+        self.element.parent = self
+        self.invalidate_child(self.element)
+        # self._refresh()
+
+    def _refresh(self) -> None:
+
+        if not self._refresh_children:
+            return
+
+        buffer = self.console.get_buffer()
+
+        if self.element in self._refresh_children:
+            self.element.render(buffer)
+
+        self._refresh_children.clear()
+
+        _asyncio.get_running_loop().call_soon(self.console.flush)
+
+    def invalidate_child(self, child: _Element) -> bool:
+
+        if not super().invalidate_child(child):
+            return False
+
+        _asyncio.get_running_loop().call_soon(self._refresh)
+        return True
 
     def _event_callback(self, event: _events.Event,
                         *, quit_signal: _Signal) -> None:
