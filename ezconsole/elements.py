@@ -11,20 +11,62 @@ from abc import (
     abstractmethod as _abstractmethod,
 )
 
+import weakref as _weakref
+
 import numpy as _np
 
 from . import events as _events
 
 
-class _Element(metaclass=_ABCMeta):
+class _Container(metaclass=_ABCMeta):
 
     def __init__(self, **kwargs) -> None:
+
+        super().__init__(**kwargs)
+
+        self._refresh_children = _weakref.WeakSet()
+
+    def invalidate_child(self, child: '_Element') -> bool:
+
+        if child in self._refresh_children:
+            return False
+
+        self._refresh_children.add(child)
+        return True
+
+
+class _Element(metaclass=_ABCMeta):
+
+    def __init__(self, *, parent: _Container = None, **kwargs) -> None:
+
+        super().__init__(**kwargs)
+
+        self._parent = None
+        self._needs_refresh = True
+        self._refresh_children = None
 
         self._min = 0, 0
         self._def = 0, 0
         self._max = float('inf'), float('inf')
 
-        super().__init__(**kwargs)
+        self.parent = parent
+
+    @property
+    def parent(self) -> _Optional[_Container]:
+
+        return self._parent()
+
+    @parent.setter
+    def parent(self, parent: _Optional[_Container]) -> None:
+
+        if parent is None:
+            self._parent = type(None)
+            return
+
+        self._parent = _weakref.ref(parent)
+
+        if self._needs_refresh:
+            parent.invalidate_child(self)
 
     def get_min(self) -> _Tuple[int, int]:
 
@@ -39,9 +81,37 @@ class _Element(metaclass=_ABCMeta):
 
         raise NotImplementedError
 
+    def invalidate(self) -> bool:
+
+        if self._needs_refresh:
+            return False
+
+        self._needs_refresh = True
+
+        parent = self._parent()
+        if parent is not None:
+            parent.invalidate_child(self)
+
+        return True
+
     def handle_event(self, event: _events.Event) -> bool:
 
         return False
+
+
+# noinspection PyAbstractClass
+class _ContainerElement(_Element, _Container):
+
+    def invalidate_child(self, child: _Element) -> bool:
+
+        if not super().invalidate_child(child):
+            return False
+
+        parent = self._parent()
+        if parent is not None:
+            parent.invalidate_child(self)
+
+        return True
 
 
 class Choice(_Element):
@@ -56,8 +126,8 @@ class Choice(_Element):
         width = max(len(item) for item in self._items)
         height = len(self._items)
 
-        self._min = min(3, height), min(3, width) + 2
-        self._def = height, width + 2
+        self._min = min(3, height), min(3, width) + 4
+        self._def = height, width + 4
 
     def render(self, cells: _np.ndarray) -> None:
 
@@ -65,9 +135,20 @@ class Choice(_Element):
         lines = _np.ndarray((rows,), dtype=f'=U{cols}', buffer=cells)
 
         count = min(len(self._items), rows)
+        choice = self._choice - 1
 
-        lines[:count] = self._items[:count]
+        for y, item in enumerate(self._items[:count]):
+
+            text = f" {item:.{cols-4}} "
+
+            if y == choice:
+                lines[y] = text.center(cols, '=')
+            else:
+                lines[y] = text.center(cols)
+
         lines[count:] = ''
+
+        self._needs_refresh = False
 
     def handle_event(self, event: _events.Event) -> bool:
 
@@ -81,6 +162,8 @@ class Choice(_Element):
 
         self._choice += event.y
         self._choice %= len(self._items) + 1
+
+        self.invalidate()
 
         return True
 
